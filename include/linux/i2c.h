@@ -121,6 +121,24 @@ extern s32 i2c_smbus_write_i2c_block_data(const struct i2c_client *client,
 					  const u8 *values);
 #endif /* I2C */
 
+/* I2C slave support */
+
+enum i2c_slave_event {
+	I2C_SLAVE_REQ_READ_START,
+	I2C_SLAVE_REQ_READ_END,
+	I2C_SLAVE_REQ_WRITE_START,
+	I2C_SLAVE_REQ_WRITE_END,
+	I2C_SLAVE_STOP,
+};
+
+typedef int (*i2c_slave_cb_t)(struct i2c_client *, enum i2c_slave_event, u8 *);
+
+extern int i2c_slave_register(struct i2c_client *client, i2c_slave_cb_t slave_cb);
+extern int i2c_slave_unregister(struct i2c_client *client);
+
+#define i2c_slave_event(__client, __event, __value) \
+	__client->slave_cb(__client, __event, __value)
+
 /**
  * struct i2c_driver - represent an I2C device driver
  * @class: What kind of i2c device we instantiate (for detect)
@@ -224,6 +242,7 @@ struct i2c_client {
 	struct device dev;		/* the device structure		*/
 	int irq;			/* irq issued by device		*/
 	struct list_head detected;
+	i2c_slave_cb_t slave_cb;	/* callback for slave mode	*/
 };
 #define to_i2c_client(d) container_of(d, struct i2c_client, dev)
 
@@ -377,6 +396,9 @@ struct i2c_algorithm {
 
 	/* To determine what the adapter supports */
 	u32 (*functionality) (struct i2c_adapter *);
+
+	int (*reg_slave)(struct i2c_client *client);
+	int (*unreg_slave)(struct i2c_client *client);
 };
 
 /**
