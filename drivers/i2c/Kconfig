@@ -116,7 +116,7 @@ config I2C_SLAVE
 if I2C_SLAVE
 
 config I2C_SLAVE_EEPROM
-	bool "I2C eeprom slave driver"
+	tristate "I2C eeprom slave driver"
 
 endif
 
