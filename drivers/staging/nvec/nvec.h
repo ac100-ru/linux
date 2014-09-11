@@ -56,6 +56,13 @@ enum nvec_event_size {
 	NVEC_VAR_SIZE,
 };
 
+enum nvec_state {
+	ST_NONE,
+	ST_RX,
+	ST_TX,
+	ST_TRANS_START,
+};
+
 /**
  * enum nvec_msg_type - The type of a message
  * @NVEC_SYS: A system request/response
@@ -137,10 +144,6 @@ struct nvec_msg {
 struct nvec_chip {
 	struct device *dev;
 	int gpio;
-	int irq;
-	int i2c_addr;
-	void __iomem *base;
-	struct clk *i2c_clk;
 	struct reset_control *rst;
 	struct atomic_notifier_head notifier_list;
 	struct list_head rx_data, tx_data;
