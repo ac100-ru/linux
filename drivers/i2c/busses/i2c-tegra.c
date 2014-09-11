@@ -42,8 +42,15 @@
 #define I2C_SL_CNFG				0x020
 #define I2C_SL_CNFG_NACK			(1<<1)
 #define I2C_SL_CNFG_NEWSL			(1<<2)
+#define I2C_SL_RCVD				0x024
+#define I2C_SL_STATUS				0x028
+#define I2C_SL_ST_IRQ				(1<<3)
+#define I2C_SL_ST_END_TRANS			(1<<4)
+#define I2C_SL_ST_RCVD				(1<<2)
+#define I2C_SL_ST_RNW				(1<<1)
 #define I2C_SL_ADDR1				0x02c
 #define I2C_SL_ADDR2				0x030
+#define I2C_SL_DELAY_COUNT			0x03c
 #define I2C_TX_FIFO				0x050
 #define I2C_RX_FIFO				0x054
 #define I2C_PACKET_TRANSFER_STATUS		0x058
@@ -173,6 +180,7 @@ struct tegra_i2c_dev {
 	int msg_read;
 	u32 bus_clk_rate;
 	bool is_suspended;
+	struct i2c_client *slave;
 };
 
 static void dvc_writel(struct tegra_i2c_dev *i2c_dev, u32 val, unsigned long reg)
@@ -463,11 +471,74 @@ static int tegra_i2c_init(struct tegra_i2c_dev *i2c_dev)
 	return err;
 }
 
+static inline int is_ready(unsigned long status)
+{
+	return status & I2C_SL_ST_IRQ;
+}
+
+static inline int is_read(unsigned long status)
+{
+	return (status & I2C_SL_ST_RNW) == 1;
+}
+
+static inline int is_write(unsigned long status)
+{
+	return (status & I2C_SL_ST_RNW) == 0;
+}
+
+static inline int is_trans_start(unsigned long status)
+{
+	return status & I2C_SL_ST_RCVD;
+}
+
+static inline int is_trans_end(unsigned long status)
+{
+	return status & I2C_SL_ST_END_TRANS;
+}
+
+static bool tegra_i2c_slave_isr(int irq, struct tegra_i2c_dev *i2c_dev)
+{
+	unsigned long status;
+	u8 value;
+
+	status = i2c_readl(i2c_dev, I2C_SL_STATUS);
+
+	if (!is_ready(status)) {
+		return false;
+	}
+
+	/* master sent stop */
+	if (is_trans_end(status)) {
+		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_STOP, NULL);
+	}
+
+	/* i2c master sends data to us */
+	if (is_write(status)) {
+		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_WRITE_START, NULL);
+		value = i2c_readl(i2c_dev, I2C_SL_RCVD);
+		if (is_trans_start(status))
+			i2c_writel(i2c_dev, 0, I2C_SL_RCVD);
+		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_WRITE_END, &value);
+	}
+
+	/* i2c master reads data from us */
+	if (is_read(status)) {
+		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_READ_START, &value);
+		i2c_writel(i2c_dev, value, I2C_SL_RCVD);
+		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_READ_END, NULL);
+	}
+
+	return true;
+}
+
 static irqreturn_t tegra_i2c_isr(int irq, void *dev_id)
 {
 	u32 status;
 	const u32 status_err = I2C_INT_NO_ACK | I2C_INT_ARBITRATION_LOST;
 	struct tegra_i2c_dev *i2c_dev = dev_id;
+
+	if (tegra_i2c_slave_isr(irq, i2c_dev))
+		return IRQ_HANDLED;
 
 	status = i2c_readl(i2c_dev, I2C_INT_STATUS);
 
@@ -664,9 +735,42 @@ static u32 tegra_i2c_func(struct i2c_adapter *adap)
 	return ret;
 }
 
+static int tegra_reg_slave(struct i2c_client *slave)
+{
+	struct tegra_i2c_dev *i2c_dev = i2c_get_adapdata(slave->adapter);
+
+	if (i2c_dev->slave)
+		return -EBUSY;
+
+	i2c_dev->slave = slave;
+
+	i2c_writel(i2c_dev, I2C_SL_CNFG_NEWSL, I2C_SL_CNFG);
+	i2c_writel(i2c_dev, 0x1E, I2C_SL_DELAY_COUNT);
+
+	i2c_writel(i2c_dev, slave->addr, I2C_SL_ADDR1);
+	i2c_writel(i2c_dev, 0, I2C_SL_ADDR2);
+
+	return 0;
+}
+
+static int tegra_unreg_slave(struct i2c_client *slave)
+{
+	struct tegra_i2c_dev *i2c_dev = i2c_get_adapdata(slave->adapter);
+
+	WARN_ON(!i2c_dev->slave);
+
+	i2c_writel(i2c_dev, 0, I2C_SL_CNFG);
+
+	i2c_dev->slave = NULL;
+
+	return 0;
+}
+
 static const struct i2c_algorithm tegra_i2c_algo = {
 	.master_xfer	= tegra_i2c_xfer,
 	.functionality	= tegra_i2c_func,
+	.reg_slave		= tegra_reg_slave,
+	.unreg_slave	= tegra_unreg_slave,
 };
 
 static const struct tegra_i2c_hw_feature tegra20_i2c_hw = {
