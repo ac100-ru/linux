@@ -482,14 +482,14 @@ static inline int is_ready(unsigned long status)
 	return status & I2C_SL_ST_IRQ;
 }
 
-static inline int is_read(unsigned long status)
-{
-	return (status & I2C_SL_ST_RNW) == 1;
-}
-
 static inline int is_write(unsigned long status)
 {
 	return (status & I2C_SL_ST_RNW) == 0;
+}
+
+static inline int is_read(unsigned long status)
+{
+	return !is_write(status);
 }
 
 static inline int is_trans_start(unsigned long status)
