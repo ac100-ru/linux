@@ -39,6 +39,57 @@
 
 #include "nvec.h"
 
+static int g_dbg[1024];
+static int g_dbg_size = 1024;
+static int g_dbg_pos = 0;
+
+#define I2C_SL_ST_END_TRANS			(1<<4)
+#define I2C_SL_ST_IRQ				(1<<3)
+#define I2C_SL_ST_RCVD				(1<<2)
+#define I2C_SL_ST_RNW				(1<<1)
+
+#define DBG_EVENT(x) (x)
+#define DBG_VALUE(x) (x)
+
+#define END(x) ( ((x) & I2C_SL_ST_END_TRANS) ? "E" : "." )
+#define INT(x) ( ((x) & I2C_SL_ST_IRQ) ? "I" : "." )
+#define NEW(x) ( ((x) & I2C_SL_ST_RCVD) ? "S" : "." )
+#define RW(x) ( ((x) & I2C_SL_ST_RNW) ? "R" : "W" )
+
+#define DBG_STATUS(x) END(x), INT(x), NEW(x), RW(x)
+
+static inline void dbg_put(int event, int value)
+{
+	if (g_dbg_pos == g_dbg_size)
+		return;
+	g_dbg[g_dbg_pos++] = event;
+	g_dbg[g_dbg_pos++] = value;
+}
+
+static inline void dbg_print(const char* msg)
+{
+	int i = 0;
+
+	printk("nvec dbg: %s\n", msg);
+	for (i = 0; i < g_dbg_pos; i += 2) {
+		if (DBG_EVENT(g_dbg[i]) == 0xf0)
+			printk("nvec: dbg[%d]: %s%s%s%s\n",
+					i,
+					DBG_STATUS(g_dbg[i+1]));
+		else
+			printk("nvec: dbg[%d]: 0x%02x - 0x%x\n",
+					i,
+					DBG_EVENT(g_dbg[i]),
+					DBG_VALUE(g_dbg[i + 1]));
+	}
+}
+
+static inline void dbg_clear(void)
+{
+	g_dbg_pos = 0;
+}
+
+
 /**
  * enum nvec_msg_category - Message categories for nvec_msg_alloc()
  * @NVEC_MSG_RX: The message is an incoming message (from EC)
@@ -247,6 +298,8 @@ int nvec_write_async(struct nvec_chip *nvec, const unsigned char *data,
 	struct nvec_msg *msg;
 	unsigned long flags;
 
+	dev_dbg(nvec->dev, "write async start\n");
+
 	msg = nvec_msg_alloc(nvec, NVEC_MSG_TX);
 
 	if (msg == NULL)
@@ -261,6 +314,7 @@ int nvec_write_async(struct nvec_chip *nvec, const unsigned char *data,
 	spin_unlock_irqrestore(&nvec->tx_lock, flags);
 
 	schedule_work(&nvec->tx_work);
+	dev_dbg(nvec->dev, "write async end\n");
 
 	return 0;
 }
@@ -286,6 +340,7 @@ struct nvec_msg *nvec_write_sync(struct nvec_chip *nvec,
 {
 	struct nvec_msg *msg;
 
+	dev_dbg(nvec->dev, "write sync start\n");
 	mutex_lock(&nvec->sync_write_mutex);
 
 	nvec->sync_write_pending = (data[1] << 8) + data[0];
@@ -298,9 +353,11 @@ struct nvec_msg *nvec_write_sync(struct nvec_chip *nvec,
 	dev_dbg(nvec->dev, "nvec_sync_write: 0x%04x\n",
 					nvec->sync_write_pending);
 	if (!(wait_for_completion_timeout(&nvec->sync_write,
-				msecs_to_jiffies(2000)))) {
+				msecs_to_jiffies(6000)))) {
 		dev_warn(nvec->dev, "timeout waiting for sync write to complete\n");
 		mutex_unlock(&nvec->sync_write_mutex);
+		dbg_print("EC sync write timeout");
+		dbg_clear();
 		return NULL;
 	}
 
@@ -309,6 +366,8 @@ struct nvec_msg *nvec_write_sync(struct nvec_chip *nvec,
 	msg = nvec->last_sync_msg;
 
 	mutex_unlock(&nvec->sync_write_mutex);
+	dev_dbg(nvec->dev, "write sync end\n");
+	dbg_clear();
 
 	return msg;
 }
@@ -325,7 +384,7 @@ static void nvec_toggle_global_events(struct nvec_chip *nvec, bool state)
 {
 	unsigned char global_events[] = { NVEC_SLEEP, GLOBAL_EVENTS, state };
 
-	nvec_write_async(nvec, global_events, 3);
+	nvec_write_sync(nvec, global_events, 3);
 }
 
 /**
@@ -364,18 +423,21 @@ static void nvec_request_master(struct work_struct *work)
 	long err;
 	struct nvec_msg *msg;
 
+	dev_dbg(nvec->dev, "request master start\n");
 	spin_lock_irqsave(&nvec->tx_lock, flags);
 	while (!list_empty(&nvec->tx_data)) {
 		msg = list_first_entry(&nvec->tx_data, struct nvec_msg, node);
 		spin_unlock_irqrestore(&nvec->tx_lock, flags);
 		nvec_gpio_set_value(nvec, 0);
 		err = wait_for_completion_interruptible_timeout(
-				&nvec->ec_transfer, msecs_to_jiffies(5000));
+				&nvec->ec_transfer, msecs_to_jiffies(7000));
 
 		if (err == 0) {
 			dev_warn(nvec->dev, "timeout waiting for ec transfer\n");
 			nvec_gpio_set_value(nvec, 1);
 			msg->pos = 0;
+			dbg_print("request master timeout");
+			dbg_clear();
 		}
 
 		spin_lock_irqsave(&nvec->tx_lock, flags);
@@ -386,6 +448,8 @@ static void nvec_request_master(struct work_struct *work)
 		}
 	}
 	spin_unlock_irqrestore(&nvec->tx_lock, flags);
+	dev_dbg(nvec->dev, "request master end\n");
+	dbg_clear();
 }
 
 /**
@@ -458,11 +522,15 @@ static void nvec_tx_completed(struct nvec_chip *nvec)
 {
 	/* We got an END_TRANS, let's skip this, maybe there's an event */
 	if (nvec->tx->pos != nvec->tx->size) {
-		dev_err(nvec->dev, "premature END_TRANS, resending\n");
+		dbg_put(0xa1, 1);
+		dev_err(nvec->dev, "premature END_TRANS, resending: pos:%u, size:%u\n",
+				nvec->tx->pos, nvec->tx->size);
 		nvec->tx->pos = 0;
 		nvec_gpio_set_value(nvec, 0);
 	} else {
-		nvec->state = 0;
+		dbg_put(0xa1, 0);
+		nvec->state = ST_NONE;
+		nvec->tx->pos = 0;
 	}
 }
 
@@ -475,12 +543,13 @@ static void nvec_tx_completed(struct nvec_chip *nvec)
 static void nvec_rx_completed(struct nvec_chip *nvec)
 {
 	if (nvec->rx->pos != nvec_msg_size(nvec->rx)) {
+		dbg_put(0xa2, 1);
 		dev_err(nvec->dev, "RX incomplete: Expected %u bytes, got %u\n",
 			   (uint) nvec_msg_size(nvec->rx),
 			   (uint) nvec->rx->pos);
 
 		nvec_msg_free(nvec, nvec->rx);
-		nvec->state = 0;
+		nvec->state = ST_NONE;
 
 		/* Battery quirk - Often incomplete, and likes to crash */
 		if (nvec->rx->data[0] == NVEC_BAT)
@@ -489,6 +558,7 @@ static void nvec_rx_completed(struct nvec_chip *nvec)
 		return;
 	}
 
+	dbg_put(0xa2, 0);
 	spin_lock(&nvec->rx_lock);
 
 	/* add the received data to the work list
@@ -497,7 +567,7 @@ static void nvec_rx_completed(struct nvec_chip *nvec)
 
 	spin_unlock(&nvec->rx_lock);
 
-	nvec->state = 0;
+	nvec->state = ST_NONE;
 
 	if (!nvec_msg_is_event(nvec->rx))
 		complete(&nvec->ec_transfer);
@@ -533,6 +603,7 @@ static void nvec_invalid_flags(struct nvec_chip *nvec, unsigned int status,
  */
 static void nvec_tx_set(struct nvec_chip *nvec)
 {
+	dbg_put(0xa0, 0);
 	spin_lock(&nvec->tx_lock);
 	if (list_empty(&nvec->tx_data)) {
 		dev_err(nvec->dev, "empty tx - sending no-op\n");
@@ -738,14 +809,20 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 {
 	struct nvec_chip *nvec = i2c_get_clientdata(client);
 
+	if (event >= 0xf0)
+		dbg_put(event, (int)(*((unsigned long*)val)));
+	else
+		dbg_put(event, val ? (*val) : 0x100);
+
 	switch (event) {
 	case I2C_SLAVE_REQ_WRITE_END:
 		if (nvec->state == ST_NONE) {
-			if (client->addr != *val)
+			if (client->addr != ((*val) >> 1))
 				dev_err(&client->dev,
 				"received address 0x%02x, expected 0x%02x\n",
-				*val, client->addr);
+				((*val) >> 1), client->addr);
 			nvec->state = ST_TRANS_START;
+			nvec->rx->pos = 0;
 			break;
 		}
 
@@ -773,9 +850,19 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 			return -1;
 		}
 
-		if (nvec->rx) {
+		if (nvec->state == ST_RX) {
+			/*udelay(33);*/
 			nvec_msg_free(nvec, nvec->rx);
 			nvec_tx_set(nvec);
+		}
+
+		if (!nvec->tx || nvec->tx->pos >= nvec->tx->size) {
+			dev_err(nvec->dev, "tx buffer underflow on %p (%u > %u)\n",
+				nvec->tx,
+				(uint) (nvec->tx ? nvec->tx->pos : 0),
+				(uint) (nvec->tx ? nvec->tx->size : 0));
+			nvec->state = ST_NONE;
+			break;
 		}
 
 		nvec->state = ST_TX;
@@ -796,9 +883,10 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 		break;
 
 	default:
-		break;
+		return 0;
 	}
 
+	/*udelay(100);*/
 	return 0;
 }
 
