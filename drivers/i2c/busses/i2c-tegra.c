@@ -406,6 +406,12 @@ static inline int tegra_i2c_clock_enable(struct tegra_i2c_dev *i2c_dev)
 
 static inline void tegra_i2c_clock_disable(struct tegra_i2c_dev *i2c_dev)
 {
+	if (i2c_dev->slave) {
+		dev_warn(i2c_dev->dev,
+			"i2c slave is registered, don't disable a clock\n");
+		return;
+	}
+
 	clk_disable_unprepare(i2c_dev->div_clk);
 	if (!i2c_dev->hw->has_single_clk_source)
 		clk_disable_unprepare(i2c_dev->fast_clk);
@@ -501,11 +507,18 @@ static bool tegra_i2c_slave_isr(int irq, struct tegra_i2c_dev *i2c_dev)
 	unsigned long status;
 	u8 value;
 
-	status = i2c_readl(i2c_dev, I2C_SL_STATUS);
+	if (!i2c_dev->slave || !i2c_dev->slave->slave_cb)
+		return false;
 
+	status = i2c_readl(i2c_dev, I2C_SL_STATUS);
 	if (!is_ready(status)) {
+		/* FIXME Remove debugging */
+		i2c_slave_event(i2c_dev->slave, 0xf1, (u8*)&status);
 		return false;
 	}
+
+	/* FIXME Remove debugging */
+	i2c_slave_event(i2c_dev->slave, 0xf0, (u8*)&status);
 
 	/* master sent stop */
 	if (is_trans_end(status)) {
@@ -743,6 +756,12 @@ static int tegra_reg_slave(struct i2c_client *slave)
 		return -EBUSY;
 
 	i2c_dev->slave = slave;
+
+	tegra_i2c_clock_enable(i2c_dev);
+
+	reset_control_assert(i2c_dev->rst);
+	udelay(2);
+	reset_control_deassert(i2c_dev->rst);
 
 	i2c_writel(i2c_dev, I2C_SL_CNFG_NEWSL, I2C_SL_CNFG);
 	i2c_writel(i2c_dev, 0x1E, I2C_SL_DELAY_COUNT);
