@@ -822,13 +822,15 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 	switch (event) {
 	case I2C_SLAVE_REQ_WRITE_END:
 		if (nvec->state == ST_NONE) {
-			if (client->addr != ((*val) >> 1))
+			if (client->addr != ((*val) >> 1)) {
 				dev_err(&client->dev,
 				"received address 0x%02x, expected 0x%02x\n",
 				((*val) >> 1), client->addr);
+				dbg_put(0xbad0, (*val));
+				g_bug = 1;
+			}
 			nvec->state = ST_TRANS_START;
 			nvec->rx->pos = 0;
-			g_bug = 1;
 			break;
 		}
 
@@ -852,7 +854,8 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 	case I2C_SLAVE_REQ_READ_START:
 		if (nvec->state == ST_NONE) {
 			dev_err(&client->dev,
-			"unexpected read without transaction start\n");
+			"unexpected read without transaction start, state %d\n", nvec->state);
+			dbg_put(0xbad1, nvec->state);
 			g_bug = 1;
 			return -1;
 		}
@@ -869,7 +872,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 				(uint) (nvec->tx ? nvec->tx->pos : 0),
 				(uint) (nvec->tx ? nvec->tx->size : 0));
 			nvec->state = ST_NONE;
-			g_bug = 1;
+			dbg_put(0xbad2, 0);
 			break;
 		}
 
