@@ -523,6 +523,8 @@ static bool tegra_i2c_slave_isr(int irq, struct tegra_i2c_dev *i2c_dev)
 	/* master sent stop */
 	if (is_trans_end(status)) {
 		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_STOP, NULL);
+		if (!is_trans_start(status))
+			return true;
 	}
 
 	/* i2c master sends data to us */
