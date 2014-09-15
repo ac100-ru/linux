@@ -42,6 +42,7 @@
 static int g_dbg[1024];
 static int g_dbg_size = 1024;
 static int g_dbg_pos = 0;
+static int g_bug = 0;
 
 #define I2C_SL_ST_END_TRANS			(1<<4)
 #define I2C_SL_ST_IRQ				(1<<3)
@@ -86,6 +87,10 @@ static inline void dbg_print(const char* msg)
 
 static inline void dbg_clear(void)
 {
+	if (g_bug)
+		dbg_print("internal error");
+
+	g_bug = 0;
 	g_dbg_pos = 0;
 }
 
@@ -823,6 +828,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 				((*val) >> 1), client->addr);
 			nvec->state = ST_TRANS_START;
 			nvec->rx->pos = 0;
+			g_bug = 1;
 			break;
 		}
 
@@ -847,6 +853,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 		if (nvec->state == ST_NONE) {
 			dev_err(&client->dev,
 			"unexpected read without transaction start\n");
+			g_bug = 1;
 			return -1;
 		}
 
@@ -862,6 +869,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 				(uint) (nvec->tx ? nvec->tx->pos : 0),
 				(uint) (nvec->tx ? nvec->tx->size : 0));
 			nvec->state = ST_NONE;
+			g_bug = 1;
 			break;
 		}
 
