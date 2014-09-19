@@ -526,6 +526,7 @@ static void nvec_tx_completed(struct nvec_chip *nvec)
 	/* We got an END_TRANS, let's skip this, maybe there's an event */
 	if (nvec->tx->pos != nvec->tx->size) {
 		dbg_put(0xa1, 1);
+		g_bug = 1;
 		dev_err(nvec->dev, "premature END_TRANS, resending: pos:%u, size:%u\n",
 				nvec->tx->pos, nvec->tx->size);
 		nvec->tx->pos = 0;
@@ -547,6 +548,7 @@ static void nvec_rx_completed(struct nvec_chip *nvec)
 {
 	if (nvec->rx->pos != nvec_msg_size(nvec->rx)) {
 		dbg_put(0xa2, 1);
+		g_bug = 1;
 		dev_err(nvec->dev, "RX incomplete: Expected %u bytes, got %u\n",
 			   (uint) nvec_msg_size(nvec->rx),
 			   (uint) nvec->rx->pos);
@@ -621,12 +623,20 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 
 	if (event >= 0xf0)
 		dbg_put(event, (int)(*((unsigned long*)val)));
-	else
-		dbg_put(event, val ? (*val) : 0x100);
 
 	switch (event) {
 	case I2C_SLAVE_REQ_WRITE_END:
+		dbg_put(event, val ? (*val) : 0x100);
+
 		if (nvec->state == ST_NONE) {
+			nvec->rx = nvec_msg_alloc(nvec, NVEC_MSG_RX);
+			/* Should not happen in a normal world */
+			if (unlikely(nvec->rx == NULL)) {
+				nvec->state = ST_NONE;
+				return -1;
+			}
+			nvec->rx->pos = 0;
+
 			if (client->addr != ((*val) >> 1)) {
 				dev_err(&client->dev,
 				"received address 0x%02x, expected 0x%02x\n",
@@ -637,19 +647,6 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 			nvec->state = ST_TRANS_START;
 			nvec->rx->pos = 0;
 			break;
-		}
-
-		if (!nvec->rx)
-		{
-			nvec->rx = nvec_msg_alloc(nvec, NVEC_MSG_RX);
-
-			/* Should not happen in a normal world */
-			if (unlikely(nvec->rx == NULL)) {
-				nvec->state = ST_NONE;
-				return -1;
-			}
-
-			nvec->rx->pos = 0;
 		}
 
 		nvec->rx->data[nvec->rx->pos++] = *val;
@@ -682,14 +679,17 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 
 		nvec->state = ST_TX;
 		*val = nvec->tx->data[nvec->tx->pos];
+		dbg_put(event, val);
 		break;
 
 	case I2C_SLAVE_REQ_READ_END:
+		dbg_put(event, val ? (*val) : 0x100);
 		nvec->tx->pos++;
 		nvec_gpio_set_value(nvec, 1);
 		break;
 
 	case I2C_SLAVE_STOP:
+		dbg_put(event, val ? (*val) : 0x100);
 		if (nvec->state == ST_TX)
 			nvec_tx_completed(nvec);
 		else if (nvec->state == ST_RX)
