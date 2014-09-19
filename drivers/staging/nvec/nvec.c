@@ -679,7 +679,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 
 		nvec->state = ST_TX;
 		*val = nvec->tx->data[nvec->tx->pos];
-		dbg_put(event, val);
+		dbg_put(event, *val);
 		break;
 
 	case I2C_SLAVE_REQ_READ_END:
