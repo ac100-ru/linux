@@ -222,6 +222,8 @@ static struct nvec_msg *nvec_msg_alloc(struct nvec_chip *nvec,
 
 	dev_err(nvec->dev, "could not allocate %s buffer\n",
 		(category == NVEC_MSG_TX) ? "TX" : "RX");
+	dbg_print("failed to allocate buffer");
+	dbg_clear();
 
 	return NULL;
 }
@@ -368,7 +370,6 @@ struct nvec_msg *nvec_write_sync(struct nvec_chip *nvec,
 
 	mutex_unlock(&nvec->sync_write_mutex);
 
-	dbg_clear();
 
 	return msg;
 }
@@ -448,8 +449,6 @@ static void nvec_request_master(struct work_struct *work)
 		}
 	}
 	spin_unlock_irqrestore(&nvec->tx_lock, flags);
-
-	dbg_clear();
 }
 
 /**
@@ -464,8 +463,12 @@ static int parse_msg(struct nvec_chip *nvec, struct nvec_msg *msg)
 {
 	if ((msg->data[0] & 1 << 7) == 0 && msg->data[3]) {
 		dev_err(nvec->dev, "ec responded %*ph\n", 4, msg->data);
+		dbg_print("invalid message received");
+		dbg_clear();
 		return -EINVAL;
 	}
+
+	dbg_clear();
 
 	if ((msg->data[0] >> 7) == 1 && (msg->data[0] & 0x0f) == 5)
 		print_hex_dump(KERN_WARNING, "ec system event ",
