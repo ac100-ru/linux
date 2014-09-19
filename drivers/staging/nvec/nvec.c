@@ -698,6 +698,7 @@ static int nvec_slave_cb(struct i2c_client *client, enum i2c_slave_event event, 
 		break;
 
 	default:
+		dbg_put(event, val ? (*val) : 0x100);
 		return 0;
 	}
 
