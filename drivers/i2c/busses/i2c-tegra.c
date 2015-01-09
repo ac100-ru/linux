@@ -31,6 +31,9 @@
 
 #include <asm/unaligned.h>
 
+/* Workaround for AP20 New I2C Slave Controller bug #626607. */
+int g_slave_read_start_delay = 8;
+
 #define TEGRA_I2C_TIMEOUT (msecs_to_jiffies(1000))
 #define BYTES_PER_FIFO_WORD 4
 
@@ -539,6 +542,8 @@ static bool tegra_i2c_slave_isr(int irq, struct tegra_i2c_dev *i2c_dev)
 	/* i2c master reads data from us */
 	if (is_read(status)) {
 		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_READ_START, &value);
+		if (is_trans_start(status) && g_slave_read_start_delay)
+			udelay(g_slave_read_start_delay);
 		i2c_writel(i2c_dev, value, I2C_SL_RCVD);
 		i2c_slave_event(i2c_dev->slave, I2C_SLAVE_REQ_READ_END, NULL);
 	}
