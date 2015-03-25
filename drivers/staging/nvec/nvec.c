@@ -587,7 +587,7 @@ static int nvec_slave_cb(struct i2c_client *client,
 				nvec->state);
 			return -1;
 		}
-		if (nvec->rx->pos >= nvec->rx->size) {
+		if (nvec->rx->pos >= NVEC_MSG_SIZE) {
 			dev_err(&client->dev,
 				"write buffer overflow: state %d\n",
 				nvec->state);
