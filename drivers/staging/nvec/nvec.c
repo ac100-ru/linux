@@ -613,7 +613,6 @@ static int nvec_slave_cb(struct i2c_client *client,
 				nvec->state);
 			return -1;
 		}
-		nvec->tx->pos++;
 		nvec_gpio_set_value(nvec, 1);
 		/* fallthrough */
 	case I2C_SLAVE_READ_PROCESSED:
@@ -636,16 +635,14 @@ static int nvec_slave_cb(struct i2c_client *client,
 		}
 
 		nvec->state = ST_TX;
-		*val = nvec->tx->data[nvec->tx->pos];
+		*val = nvec->tx->data[nvec->tx->pos++];
 		break;
 
 	case I2C_SLAVE_STOP:
-		if (nvec->state == ST_TX) {
-			nvec->tx->pos++;
+		if (nvec->state == ST_TX)
 			nvec_tx_completed(nvec);
-		} else if (nvec->state == ST_RX) {
+		else if (nvec->state == ST_RX)
 			nvec_rx_completed(nvec);
-		}
 		nvec->state = ST_NONE;
 		break;
 
