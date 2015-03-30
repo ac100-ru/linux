@@ -1,5 +1,6 @@
 /dts-v1/;
 
+#include <dt-bindings/i2c/i2c.h>
 #include <dt-bindings/input/input.h>
 #include "tegra20.dtsi"
 
@@ -288,20 +289,16 @@
 		clock-frequency = <100000>;
 	};
 
-	nvec@7000c500 {
-		compatible = "nvidia,nvec";
-		reg = <0x7000c500 0x100>;
-		interrupts = <GIC_SPI 92 IRQ_TYPE_LEVEL_HIGH>;
-		#address-cells = <1>;
-		#size-cells = <0>;
+	i2c@7000c500 {
+		status = "okay";
 		clock-frequency = <80000>;
-		request-gpios = <&gpio TEGRA_GPIO(V, 2) GPIO_ACTIVE_HIGH>;
-		slave-addr = <138>;
-		clocks = <&tegra_car TEGRA20_CLK_I2C3>,
-		         <&tegra_car TEGRA20_CLK_PLL_P_OUT3>;
-		clock-names = "div-clk", "fast-clk";
-		resets = <&tegra_car 67>;
-		reset-names = "i2c";
+
+		nvec: nvec@45 {
+			compatible = "nvidia,nvec-slave";
+			reg = <(I2C_OWN_SLAVE_ADDRESS | 0x45)>;
+			request-gpios = <&gpio TEGRA_GPIO(V, 2)
+				GPIO_ACTIVE_HIGH>;
+		};
 	};
 
 	i2c@7000d000 {
