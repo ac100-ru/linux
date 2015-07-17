@@ -1,5 +1,6 @@
 /dts-v1/;
 
+#include <dt-bindings/i2c/i2c.h>
 #include <dt-bindings/input/input.h>
 #include "tegra124.dtsi"
 
@@ -1389,6 +1390,12 @@
 			compatible = "atmel,24c02";
 			reg = <0x56>;
 			pagesize = <8>;
+		};
+
+		eeprom@42 {
+			compatible = "linux,slave-24c02";
+			//FIXME: Should be I2C_OWN_SLAVE_ADDRESS | 0x42
+			reg = <0xc0000042>;
 		};
 	};
 
