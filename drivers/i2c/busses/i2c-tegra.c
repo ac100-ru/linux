@@ -402,6 +402,22 @@ static void tegra_dvc_init(struct tegra_i2c_dev *i2c_dev)
 	dvc_writel(i2c_dev, val, DVC_CTRL_REG1);
 }
 
+static int tegra_i2c_init_slave(struct tegra_i2c_dev *i2c_dev, u32 addr, u32 flags)
+{
+	int addr2 = 0;
+
+	i2c_writel(i2c_dev, I2C_SL_CNFG_NEWSL, I2C_SL_CNFG);
+	i2c_writel(i2c_dev, I2C_SL_DELAY_COUNT_DEFAULT, I2C_SL_DELAY_COUNT);
+
+	if (flags & I2C_CLIENT_TEN)
+		addr2 = (addr >> 7) | I2C_SL_ADDR2_TEN_BIT_MODE;
+
+	i2c_writel(i2c_dev, addr, I2C_SL_ADDR1);
+	i2c_writel(i2c_dev, addr2, I2C_SL_ADDR2);
+
+	return 0;
+}
+
 static inline int tegra_i2c_clock_enable(struct tegra_i2c_dev *i2c_dev)
 {
 	int ret;
@@ -461,12 +477,16 @@ static int tegra_i2c_init(struct tegra_i2c_dev *i2c_dev)
 	i2c_writel(i2c_dev, clk_divisor, I2C_CLK_DIVISOR);
 
 	if (!i2c_dev->is_dvc) {
-		u32 sl_cfg = i2c_readl(i2c_dev, I2C_SL_CNFG);
-		sl_cfg |= I2C_SL_CNFG_NACK | I2C_SL_CNFG_NEWSL;
-		i2c_writel(i2c_dev, sl_cfg, I2C_SL_CNFG);
-		i2c_writel(i2c_dev, 0xfc, I2C_SL_ADDR1);
-		i2c_writel(i2c_dev, 0x00, I2C_SL_ADDR2);
-
+		if (i2c_dev->slave) {
+			tegra_i2c_init_slave(i2c_dev, i2c_dev->slave->addr,
+					i2c_dev->slave->flags);
+		} else {
+			u32 sl_cfg = i2c_readl(i2c_dev, I2C_SL_CNFG);
+			sl_cfg |= I2C_SL_CNFG_NACK | I2C_SL_CNFG_NEWSL;
+			i2c_writel(i2c_dev, sl_cfg, I2C_SL_CNFG);
+			i2c_writel(i2c_dev, 0xfc, I2C_SL_ADDR1);
+			i2c_writel(i2c_dev, 0x00, I2C_SL_ADDR2);
+		}
 	}
 
 	val = 7 << I2C_FIFO_CONTROL_TX_TRIG_SHIFT |
@@ -767,7 +787,6 @@ static u32 tegra_i2c_func(struct i2c_adapter *adap)
 static int tegra_reg_slave(struct i2c_client *slave)
 {
 	struct tegra_i2c_dev *i2c_dev = i2c_get_adapdata(slave->adapter);
-	int addr2 = 0;
 
 	if (i2c_dev->slave)
 		return -EBUSY;
@@ -776,14 +795,7 @@ static int tegra_reg_slave(struct i2c_client *slave)
 
 	tegra_i2c_clock_enable(i2c_dev);
 
-	i2c_writel(i2c_dev, I2C_SL_CNFG_NEWSL, I2C_SL_CNFG);
-	i2c_writel(i2c_dev, I2C_SL_DELAY_COUNT_DEFAULT, I2C_SL_DELAY_COUNT);
-
-	if (slave->flags & I2C_CLIENT_TEN)
-		addr2 = (slave->addr >> 7) | I2C_SL_ADDR2_TEN_BIT_MODE;
-
-	i2c_writel(i2c_dev, slave->addr, I2C_SL_ADDR1);
-	i2c_writel(i2c_dev, addr2, I2C_SL_ADDR2);
+	tegra_i2c_init_slave(i2c_dev, slave->addr, slave->flags);
 
 	return 0;
 }
